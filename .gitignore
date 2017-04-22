@@ -2,6 +2,11 @@
 *.jar
 *.tgz
 *.zip
+*.bash_history
+*.gitconfig
+*.sublime-project
+*.sublime-workspace
+
 /visu
 /doc/build
 /doc/sphinx_bootstrap_theme
