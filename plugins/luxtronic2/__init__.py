@@ -25,6 +25,7 @@ import socket
 import threading
 import struct
 import time
+from collections import defaultdict
 
 logger = logging.getLogger('')
 
@@ -226,9 +227,9 @@ class LuxBase():
 
 
 class Luxtronic2(LuxBase):
-    _parameter = {}
-    _attribute = {}
-    _calculated = {}
+    _parameter = defaultdict(lambda: defaultdict(int))
+    _attribute = defaultdict(lambda: defaultdict(int))
+    _calculated = defaultdict(lambda: defaultdict())
     _decoded = {}
     alive = True
 
@@ -254,23 +255,27 @@ class Luxtronic2(LuxBase):
             for p in self._parameter:
                 val = self.get_parameter(p)
                 if val:
-                    self._parameter[p](val, 'Luxtronic2')
+                    val = self._parameter[p]['unpack'](val)
+                    self._parameter[p]['item'](val, 'Luxtronic2')
         if len(self._attribute) > 0:
             self.refresh_attributes()
             for a in self._attribute:
                 val = self.get_attribute(a)
                 if val:
-                    self._attribute[a](val, 'Luxtronic2')
+                    val = self._attribute[a]['unpack'](val)
+                    self._attribute[a]['item'](val, 'Luxtronic2')
         if len(self._calculated) > 0 or len(self._decoded) > 0:
             self.refresh_calculated()
             for c in self._calculated:
                 val = self.get_calculated(c)
                 if val is not None:
-                    self._calculated[c](val, 'Luxtronic2')
+                    val = self._calculated[c]['unpack'](val)
+                    self._calculated[c]['item'](val, 'Luxtronic2')
             for d in self._decoded:
                 val = self.get_calculated(d)
                 if val is not None:
-                    self._decoded[d](self._decode(d, val), 'Luxtronic2')
+                    val = self._decoded[d]['unpack'](val)
+                    self._decoded[d]['item'](self._decode(d, val), 'Luxtronic2')
         cycletime = time.time() - start
         logger.debug("cycle takes {0} seconds".format(cycletime))
 
@@ -328,22 +333,44 @@ class Luxtronic2(LuxBase):
         return value
 
     def parse_item(self, item):
+        def __reverseListOp(param):
+            # reversing list building of smarthome.py config parser for the
+            # binary or opperator |
+            if isinstance(param, list):
+                return (' | '.join(param))
+            else:
+                return param
+
+        def add_pack_unpack(dps):
+            if 'lux2_pack' in item.conf:
+                dps['pack'] = eval(__reverseListOp(item.conf['lux2_pack']))
+            else:
+                dps['pack'] = lambda x: x
+            if 'lux2_unpack' in item.conf:
+                dps['unpack'] = eval(__reverseListOp(item.conf['lux2_unpack']))
+            else:
+                dps['unpack'] = lambda x: x
+
         if 'lux2' in item.conf:
             d = item.conf['lux2']
             d = int(d)
-            self._decoded[d] = item
+            self._decoded[d]['item'] = item
+            add_pack_unpack(self._decoded[d])
         if 'lux2_a' in item.conf:
             a = item.conf['lux2_a']
             a = int(a)
-            self._attribute[a] = item
+            self._attribute[a]['item'] = item
+            add_pack_unpack(self._attribute[a])
         if 'lux2_c' in item.conf:
             c = item.conf['lux2_c']
             c = int(c)
-            self._calculated[c] = item
+            self._calculated[c]['item'] = item
+            add_pack_unpack(self._calculated[c])
         if 'lux2_p' in item.conf:
             p = item.conf['lux2_p']
             p = int(p)
-            self._parameter[p] = item
+            self._parameter[p]['item'] = item
+            add_pack_unpack(self._calculated[p])
             return self.update_item
 
     def update_item(self, item, caller=None, source=None, dest=None):

@@ -46,6 +46,12 @@ Defines a mapping to a attribute (read-only). All attribute values are bytes (nu
 ### lux2_c
 Defines a mapping to a calculated value (read-only). All calculated values are integer (numbers).
 
+### lux2_unpack
+Python lambda function. Called before the value is sent towards the device.
+
+### lux2_pack
+Called before the value is written to the smarthome item.
+
 <pre>
 [heating]
     [[temp_outside]]
@@ -54,6 +60,7 @@ Defines a mapping to a calculated value (read-only). All calculated values are i
     [[state_numeric]]
         type = num
         lux2_c = 119
+        lux2_unpack = lambda x: x/10.0
     [[state]]
         type = str
         lux2 = 119
@@ -66,5 +73,10 @@ Currently there is no logic configuration for this plugin.
 # Functions
 
 Currently there are no functions offered from this plugin.
+
+#### Pack Unpack
+
+lux_unpack and lux_pack require a standard Python lambda function. Pack is called before the value is sent towards the device, unpack for the other way around (device to Smarthome).
+
 
 
