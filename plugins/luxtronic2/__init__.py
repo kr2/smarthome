@@ -27,7 +27,7 @@ import struct
 import time
 from collections import defaultdict
 
-logger = logging.getLogger('')
+logger = logging.getLogger('luxtronic2')
 
 
 class luxex(Exception):
@@ -36,12 +36,23 @@ class luxex(Exception):
 
 class LuxBase():
 
-    def __init__(self, host, port=8888):
+    def __init__(self, host, port=8888, max_timeouts=10):
+        """Summary
+        
+        Args:
+            host (TYPE): Description
+            port (int, optional): Description
+            max_timeouts (int, optional): after this number
+                of timeouts occured the connection is closed.
+                If None its not evaluated.
+        """
         self.host = host
         self.port = int(port)
         self._sock = False
         self._lock = threading.Lock()
         self.is_connected = False
+        self._max_timeouts = max_timeouts
+        self._timeouts = 0  # number of already occured timeouts
         self._connection_attempts = 0
         self._connection_errorlog = 60
         self._params = []
@@ -94,6 +105,13 @@ class LuxBase():
         except:
             pass
 
+    def __manage_timeouts(self):
+        self._timeouts += 1
+        if self._max_timeouts and self._timeouts >= self._max_timeouts:
+            self._timeouts = 0
+            self.close()
+            raise luxex("Max Nr timeouts reached: {}".format(self._max_timeouts))
+
     def _request(self, request, length):
         if not self.is_connected:
             raise luxex("no connection to luxtronic.")
@@ -107,6 +125,7 @@ class LuxBase():
             answer = self._sock.recv(length)
         except socket.timeout:
             self._lock.release()
+            self.__manage_timeouts()
             raise luxex("error receiving answer: timeout")
         except Exception as e:
             self._lock.release()
@@ -119,6 +138,7 @@ class LuxBase():
             return self._sock.recv(length)
         except socket.timeout:
             self._lock.release()
+            self.__manage_timeouts()
             raise luxex("error receiving payload: timeout")
         except Exception as e:
             self._lock.release()
@@ -233,39 +253,85 @@ class Luxtronic2(LuxBase):
     _decoded = {}
     alive = True
 
-    def __init__(self, smarthome, host, port=8888, cycle=300):
-        LuxBase.__init__(self, host, port)
+    def __init__(self, smarthome, host, port=8888,
+                 cycle=300, reconnect_cycle=60, max_timeouts=10):
+        LuxBase.__init__(self, host, port, max_timeouts)
         self._sh = smarthome
         self._cycle = int(cycle)
-        self.connect()
+        self._reconnect_cycle = int(reconnect_cycle)
+        try:
+            self.connect()
+        except Exception as e:
+            logger.error('luctronic2 connect faild: {}'.format(e))
 
     def run(self):
         self.alive = True
-        self._sh.scheduler.add('Luxtronic2', self._refresh, cycle=self._cycle)
+        # Letting the scheduler recall the foo by handing it "cycle" could
+        # fail in this application, because it calles the foo without checking
+        # if the last call finished. This could clog up the system.  
+        self._sh.scheduler.add('Lux2_cycle', self.__refresh, cron='init')
+        self._sh.scheduler.add('Lux2_recon', self._reconnect, cron='init')
 
     def stop(self):
         self.alive = False
+
+    def _reconnect(self):
+        while self.alive:
+            start_time = time.time()
+            if not self.is_connected:
+                try:
+                    logger.debug('lux2 trying reconnect')
+                    self.connect()
+                except Exception as e:
+                    logger.error('luctronic2 reconnect faild: {}'.format(e))
+            cycle_time = time.time() - start_time
+            time_to_sleep = self._reconnect_cycle - cycle_time
+            while self.alive and time_to_sleep > 0:  # make it more easly interuptable
+                time_to_sleep -= .1
+                time.sleep(.1)
+
+    def __refresh(self):
+        while self.alive:
+            start_time = time.time()
+            self._refresh()
+            cycle_time = time.time() - start_time
+            time_to_sleep = self._cycle - cycle_time
+            while self.alive and time_to_sleep > 0:  # make it more easly interuptable
+                time_to_sleep -= .1
+                time.sleep(.1)
 
     def _refresh(self):
         if not self.is_connected:
             return
         start = time.time()
         if len(self._parameter) > 0:
-            self.refresh_parameters()
+            try:
+                self.refresh_parameters()
+            except Exception as e:
+                logger.error('luctronic2 refresh parameters faild: {}'
+                             .format(e))
             for p in self._parameter:
                 val = self.get_parameter(p)
                 if val:
                     val = self._parameter[p]['unpack'](val)
                     self._parameter[p]['item'](val, 'Luxtronic2')
         if len(self._attribute) > 0:
-            self.refresh_attributes()
+            try:
+                self.refresh_attributes()
+            except Exception as e:
+                logger.error('luctronic2 refresh attributes faild: {}'
+                             .format(e))
             for a in self._attribute:
                 val = self.get_attribute(a)
                 if val:
                     val = self._attribute[a]['unpack'](val)
                     self._attribute[a]['item'](val, 'Luxtronic2')
         if len(self._calculated) > 0 or len(self._decoded) > 0:
-            self.refresh_calculated()
+            try:
+                self.refresh_calculated()
+            except Exception as e:
+                logger.error('luctronic2 refresh calculated faild: {}'
+                             .format(e))
             for c in self._calculated:
                 val = self.get_calculated(c)
                 if val is not None:

@@ -3,6 +3,10 @@
 # Requirements
 This plugin has no requirements or dependencies.
 
+# How it works
+At init it tries to connect to the device. If successful and if only one parameter, attribute or calculated is configured it reads the entire block. E.g. if one parameter is configured for reading, it reads the entire parameter block every 'cycle', but not the other ones. That’s by design of the device.
+If the connection is lost or if the max number of timeouts ('max_timeouts') is reached it tries to reconnect every 'reconnect_cycle'.
+
 # Configuration
 
 ## plugin.conf
@@ -12,11 +16,17 @@ This plugin has no requirements or dependencies.
     class_path = plugins.luxtronic2
     host = 192.168.0.123
     # port = 8888
+    # cycle = 300
+    # reconnect_cycle = 60
+    # max_timeouts = 10
 </pre>
 
 ### Attributes
   * `host`: specifies the hostname of your heating server.
   * `port`: if you want to use a nonstandard port.
+  * `cycle`: read cycle time in seconds.
+  * `reconnect_cycle`: cycle time for reconnect attempts in seconds.
+  * `max_timeouts`: max number of timeouts before connection is considered lost.
 
 ## items.conf
 
@@ -66,13 +76,6 @@ Called before the value is written to the smarthome item.
         lux2 = 119
 </pre>
 
-## logic.conf
-
-Currently there is no logic configuration for this plugin.
-
-# Functions
-
-Currently there are no functions offered from this plugin.
 
 #### Pack Unpack
 
