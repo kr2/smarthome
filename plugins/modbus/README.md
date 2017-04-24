@@ -64,17 +64,28 @@ Modbus RTU and TCP
     * `Addr` -- Register Address
     * `length` --  Nr of Registers to read
 * `modbus_type` -- Options are: Coil, DiscreteInput, InputRegister, HoldingRegister
+* `modbus_init` -- Defines what happens at startup or reconnect. 'write' only makes sense for Coil and HoldingRegister. Options are: None, read, write (default:None)
 * `modbus_readInterval` --  Read interval in seconds (optional). If None or <0 it is only read at startup
 * `modbus_unpack` --  See below
 * `modbus_pack` --  See below
 
 
 <pre>
-[[Temp]]
+[[Temperature]]
     type = num
     modbus_addr = ModbusOne | 1 | 0 | 1  # ModbusMasterID, SlaveNr, Addr, length (Nr of registers)
-    modbus_type = HoldingRegister  # Coil, DiscreteInput, InputRegister, HoldingRegister
+    modbus_type = InputRegister  # Coil, DiscreteInput, InputRegister, HoldingRegister
     modbus_readInterval = 1  # read interval in seconds (optional) if -1 or not given it is only read at startup
+    modbus_unpack = lambda x: (2.048 / 1023 * x[0] * 2) * 100 - 273.15  # see below
+    
+# The following would write the value at startup to put the device in a known state.
+[[Motor]]
+    type = num
+    value = 5
+    modbus_addr = ModbusOne | 2 | 1 | 1  # ModbusMasterID, SlaveNr, Addr, length (Nr of registers)
+    modbus_type = HoldingRegister  # Coil, DiscreteInput, InputRegister, HoldingRegister
+    modbus_init = write
+    modbus_readInterval = -1  # read interval in seconds (optional) if -1 or not given it is only read at startup
     modbus_unpack = lambda x: 10.23/(2**10-1)*x[0]  # see below
     modbus_pack = lambda x: [int((x*(2**10-1))/ 10.23)]  # see below
 </pre>

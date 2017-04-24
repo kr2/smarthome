@@ -47,13 +47,13 @@ class Modbus():
 
     TIMER_TICK_INTERVAL = 1
 
-    def __init__(self, smarthome, master_id, com_type, 
+    def __init__(self, smarthome, master_id, com_type,
                  timeout=None, downTime=None,
                  tcp_ip='', tcp_port='502',
                  rtu_port='', rtu_baud=9600, rtu_bytesize=8, rtu_parity='N',
                  rtu_stopbits=1, rtu_xonxoff=0):
         """smarthome.py modbus plugin
-        
+
         Args:
             smarthome (TYPE): sh object
             master_id (str): uniqu id to differentiate between different master
@@ -180,7 +180,7 @@ class Modbus():
                      .format(self._master_id))
         while self.alive:
             readStartTime = time()
-            self._read_datapoints()
+            self._update_datapoints()
             readTime = time() - readStartTime
             sleepTime = self.TIMER_TICK_INTERVAL - readTime
             if readTime > self.TIMER_TICK_INTERVAL:
@@ -196,24 +196,40 @@ class Modbus():
             if dataPoint['read_interval'] is not None:
                 dataPoint['current_time'] -= 1
 
-    def _read_datapoints(self):
+    def _update_datapoints(self):
         # reads all datapoints with timer <=0
         for dataPoint in self._dataPoints:
-            if (dataPoint['init'] and  # to read every dp at least once
+            action = None  # options: read, write
+            # noting to do
+            if (dataPoint['init'] and
                     (dataPoint['read_interval'] is None or
                      dataPoint['read_interval'] < 0)):
                 continue
-            if (not dataPoint['init'] or  # if not initalise yet
-                    dataPoint['current_time'] <= 0):
-                # if not dataPoint['init']:
-                #     
+            if not dataPoint['init']:
+                # if read or write fails this is reset to False
                 dataPoint['init'] = True
+                if dataPoint['init_style'] == 'read':
+                    action = 'read'
+                elif dataPoint['init_style'] == 'write':
+                    action = 'write'
+                else:  # if none
+                    action = None
+
+            if (not action and
+                    dataPoint['read_interval'] and
+                    dataPoint['current_time'] <= 0):
+                dataPoint['current_time'] = dataPoint['read_interval']
+                action = 'read'
+
+            if action == 'read':
                 val = self._read_datapoint(dataPoint)
                 dataPoint['item'](val,
                                   dataPoint['master_id'],
                                   self.__data_point_to_string(dataPoint),
-                                  None)
-                dataPoint['current_time'] = dataPoint['read_interval']
+                                  dest=None)
+            elif action == 'write':
+                val = dataPoint['item']()
+                self._write_datapoint(dataPoint, val)
 
     def __data_point_to_string(self, dataPoint):
         return ("{}, {}, slave#{}, addr {}, len {}"
@@ -297,7 +313,7 @@ class Modbus():
             logger.warning("Accumulated modbus write error count: {}"
                            .format(self._writeErrorCount))
             self.__manage_lost_connection(dataPoint)
-        # exceptions for connection problems 
+        # exceptions for connection problems
         except (ConnectionResetError,
                 ConnectionRefusedError,
                 Exception) as exc:  # For undefind pyserial exceptions
@@ -317,8 +333,9 @@ class Modbus():
             'unpack': lambda x: x,  # lambda function
             'pack': lambda x: x,  # lambda function
             'read_interval': None,
-            'current_time': -1,  # counts down and if <0 reading is done
-            'init': False  # is set to True if read once.
+            'current_time': 1,  # counts down and if <0 reading is done
+            'init': False,  # is set to True if init is done.
+            'init_style': None  # None, read, write
         }
 
         param = 'modbus_addr'
@@ -353,6 +370,15 @@ class Modbus():
         if param in item.conf:
             dataPoint['unpack'] = eval(__reverseListOp(item.conf[param]))
 
+        param = 'modbus_init'
+        if param in item.conf:
+            options = ['none', 'read', 'write']
+            val = str(item.conf[param]).lower()
+            if val in options:
+                dataPoint['init_style'] = val
+            else:
+                logger.error("Modbus modbus_init type not supported: {}"
+                             .format(item.conf[param]))
 
         if self._master_id == dataPoint['master_id']:
             dataPoint['item'] = item
@@ -364,9 +390,9 @@ class Modbus():
     def update_item(self, item, caller=None, source=None, dest=None):
         if caller != self._master_id:
             logger.info("update item: {0}".format(item.id()))
-            datapoint = next(datapoint for datapoint in 
+            datapoint = next(datapoint for datapoint in
                              self._dataPoints if datapoint['item'] == item)
-            self._write_datapoint( datapoint, item())
+            self._write_datapoint(datapoint, item())
 
 
 if __name__ == '__main__':
