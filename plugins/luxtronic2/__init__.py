@@ -268,9 +268,9 @@ class Luxtronic2(LuxBase):
         self.alive = True
         # Letting the scheduler recall the foo by handing it "cycle" could
         # fail in this application, because it calles the foo without checking
-        # if the last call finished. This could clog up the system.  
-        self._sh.scheduler.add('Lux2_cycle', self.__refresh, cron='init')
-        self._sh.scheduler.add('Lux2_recon', self._reconnect, cron='init')
+        # if the last call finished. This could clog up the system.
+        threading.Thread(name='Lux2_cycle', target=self.__refresh).start()
+        threading.Thread(name='Lux2_recon', target=self._reconnect).start()
 
     def stop(self):
         self.alive = False
