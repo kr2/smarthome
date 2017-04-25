@@ -22,6 +22,7 @@ import modbus_tk
 import modbus_tk.defines as cst
 from modbus_tk import modbus_rtu, modbus_tcp
 from time import sleep, time
+import threading
 
 # following not used here but needed for eval of config
 import ctypes
@@ -116,7 +117,7 @@ class Modbus():
         else:
             logger.error("Modbus com_type ({}) not implemented"
                          .format(self._com_type))
-        self._master.set_verbose(True)
+        # self._master.set_verbose(True)
 
     def _create_ModbusTCP_Master(self):
         master = None
@@ -158,13 +159,9 @@ class Modbus():
     def run(self):
         self.alive = True
         tickTimerName = 'TT_' + self._master_id
-        self._sh.scheduler.add(tickTimerName, self.__timer_tick, prio=3,
-                               cron=None, cycle=self.TIMER_TICK_INTERVAL,
-                               value=None, offset=None, next=None)
         readLoopName = 'RL_' + self._master_id
-        self._sh.scheduler.add(readLoopName, self.__read_loop, prio=3,
-                               cron='init', cycle=None,
-                               value=None, offset=None, next=None)
+        threading.Thread(name=tickTimerName, target=self.__timer_tick).start()
+        threading.Thread(name=readLoopName, target=self.__read_loop).start()
 
         for dp in self._dataPoints:
             logger.debug('Modbus Data Point: {}'
@@ -192,9 +189,17 @@ class Modbus():
                 sleep(sleepTime)
 
     def __timer_tick(self):
-        for dataPoint in self._dataPoints:
-            if dataPoint['read_interval'] is not None:
-                dataPoint['current_time'] -= 1
+        logger.debug("Modbus timer tick loop started. {}"
+                     .format(self._master_id))
+        while self.alive:
+            startTime = time()
+            for dataPoint in self._dataPoints:
+                if dataPoint['read_interval'] is not None:
+                    dataPoint['current_time'] -= self.TIMER_TICK_INTERVAL
+            deltaTime = time() - startTime
+            sleepTime = self.TIMER_TICK_INTERVAL - deltaTime
+            if sleepTime > 0:
+                sleep(sleepTime)
 
     def _update_datapoints(self):
         # reads all datapoints with timer <=0
@@ -220,6 +225,9 @@ class Modbus():
                     dataPoint['current_time'] <= 0):
                 dataPoint['current_time'] = dataPoint['read_interval']
                 action = 'read'
+
+            # logger.info('Modbus item: {}, action: {}, currentTime: {}'
+            #             .format(dataPoint['item'], action, dataPoint['current_time']))
 
             if action == 'read':
                 val = self._read_datapoint(dataPoint)
