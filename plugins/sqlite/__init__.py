@@ -308,7 +308,7 @@ class SQL():
         istart = self._get_timestamp(start)
         iend = self._get_timestamp(end)
         if step is None:
-            if count != 0:
+            if int(count) != 0:
                 step = int((iend - istart) / int(count))
             else:
                 step = iend - istart
