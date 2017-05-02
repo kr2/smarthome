@@ -176,30 +176,38 @@ class Modbus():
         logger.debug("Modbus read loop started. {}"
                      .format(self._master_id))
         while self.alive:
-            readStartTime = time()
-            self._update_datapoints()
-            readTime = time() - readStartTime
-            sleepTime = self.TIMER_TICK_INTERVAL - readTime
-            if readTime > self.TIMER_TICK_INTERVAL:
-                logger.warning("Modbus readloop needed: {:.2f} s for the "
-                               "read. This should be less then {:.2f} s."
-                               .format(readTime,
-                                       self.TIMER_TICK_INTERVAL))
-            if sleepTime > 0:
-                sleep(sleepTime)
+            try:
+                readStartTime = time()
+                self._update_datapoints()
+                readTime = time() - readStartTime
+                sleepTime = self.TIMER_TICK_INTERVAL - readTime
+                if readTime > self.TIMER_TICK_INTERVAL:
+                    logger.warning("Modbus readloop needed: {:.2f} s for the "
+                                   "read. This should be less then {:.2f} s."
+                                   .format(readTime,
+                                           self.TIMER_TICK_INTERVAL))
+                if sleepTime > 0:
+                    sleep(sleepTime)
+            except Exception as exc:
+                logger.error("Modbus Readloop faild with: {}"
+                             .format(exc))
 
     def __timer_tick(self):
-        logger.debug("Modbus timer tick loop started. {}"
-                     .format(self._master_id))
-        while self.alive:
-            startTime = time()
-            for dataPoint in self._dataPoints:
-                if dataPoint['read_interval'] is not None:
-                    dataPoint['current_time'] -= self.TIMER_TICK_INTERVAL
-            deltaTime = time() - startTime
-            sleepTime = self.TIMER_TICK_INTERVAL - deltaTime
-            if sleepTime > 0:
-                sleep(sleepTime)
+        try:
+            logger.debug("Modbus timer tick loop started. {}"
+                         .format(self._master_id))
+            while self.alive:
+                startTime = time()
+                for dataPoint in self._dataPoints:
+                    if dataPoint['read_interval'] is not None:
+                        dataPoint['current_time'] -= self.TIMER_TICK_INTERVAL
+                deltaTime = time() - startTime
+                sleepTime = self.TIMER_TICK_INTERVAL - deltaTime
+                if sleepTime > 0:
+                    sleep(sleepTime)
+        except Exception as exc:
+                logger.error("Modbus timer tick faild with: {}"
+                             .format(exc))
 
     def _update_datapoints(self):
         # reads all datapoints with timer <=0
