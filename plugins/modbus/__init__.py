@@ -24,6 +24,8 @@ from modbus_tk import modbus_rtu, modbus_tcp
 from time import sleep, time
 import threading
 
+from random import randint
+
 # following not used here but needed for eval of config
 import ctypes
 import struct
@@ -49,18 +51,20 @@ class Modbus():
     TIMER_TICK_INTERVAL = 1
 
     def __init__(self, smarthome, master_id, com_type,
-                 timeout=None, downTime=None,
+                 timeout=None, downTime=None, retries=10,
                  tcp_ip='', tcp_port='502',
                  rtu_port='', rtu_baud=9600, rtu_bytesize=8, rtu_parity='N',
-                 rtu_stopbits=1, rtu_xonxoff=0):
+                 rtu_stopbits=1, rtu_xonxoff=0,
+                 verbose=False):
         """smarthome.py modbus plugin
-
+        
         Args:
             smarthome (TYPE): sh object
             master_id (str): uniqu id to differentiate between different master
             com_type (TYPE): Modbus RTU or TCP {RTU, TCP}
             timeout (int, optional): timeout for request
             downTime (None, optional): timeout between reads
+            retries (int, optional): Number of retrys after telegram error. After that a reconnect is done.
             tcp_ip (str, optional): slave ip
             tcp_port (str, optional): slave port
             rtu_port (str, optional): serial interface e.g.:/dev/ttyUSB0
@@ -69,6 +73,8 @@ class Modbus():
             rtu_parity (str, optional): parity
             rtu_stopbits (int, optional): stopbid
             rtu_xonxoff (int, optional): xonxoff
+            verbose (bool, optional): If True debugoutput is set to verbose and
+                there is data written to /var/modbus/*master_id*.txt
         """
         self._sh = smarthome
 
@@ -76,7 +82,9 @@ class Modbus():
         self._dataPoints = []
 
         self._readErrorCount = 0
+        self._readCount = 0
         self._writeErrorCount = 0
+        self._writeCount = 0
 
         # unique master id in case there are more eg. RTU and TCP
         self._master_id = str(master_id)
@@ -99,6 +107,8 @@ class Modbus():
         else:
             self._downTime = float(downTime)
 
+        self._retries = retries
+
         self._tcp_ip = str(tcp_ip)
         self._tcp_port = int(tcp_port)
 
@@ -117,7 +127,13 @@ class Modbus():
         else:
             logger.error("Modbus com_type ({}) not implemented"
                          .format(self._com_type))
-        # self._master.set_verbose(True)
+
+        self._verbose = verbose
+        if self._verbose:
+            import os
+            self._path = self._sh.base_dir + '/var/modbus/' + self._master_id + '.txt'
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            self._master.set_verbose(True)
 
     def _create_ModbusTCP_Master(self):
         master = None
@@ -178,19 +194,24 @@ class Modbus():
         while self.alive:
             try:
                 readStartTime = time()
-                self._update_datapoints()
+                nr_reads = self._update_datapoints()
                 readTime = time() - readStartTime
                 sleepTime = self.TIMER_TICK_INTERVAL - readTime
-                if readTime > self.TIMER_TICK_INTERVAL:
-                    logger.warning("Modbus readloop needed: {:.2f} s for the "
-                                   "read. This should be less then {:.2f} s."
-                                   .format(readTime,
-                                           self.TIMER_TICK_INTERVAL))
+                logger.debug("Modbus readloop needed: {:.2f} s for {} "
+                               "reads. This should be less then {:.2f} s."
+                               .format(readTime,
+                                       nr_reads,
+                                       self.TIMER_TICK_INTERVAL))
                 if sleepTime > 0:
                     sleep(sleepTime)
             except Exception as exc:
                 logger.error("Modbus Readloop faild with: {}"
                              .format(exc))
+
+    def __update_status_file(self):
+        if self._verbose:
+            with open(self._path, 'w+') as f:
+                f.write(str(self))
 
     def __timer_tick(self):
         try:
@@ -201,6 +222,8 @@ class Modbus():
                 for dataPoint in self._dataPoints:
                     if dataPoint['read_interval'] is not None:
                         dataPoint['current_time'] -= self.TIMER_TICK_INTERVAL
+
+                self.__update_status_file()
                 deltaTime = time() - startTime
                 sleepTime = self.TIMER_TICK_INTERVAL - deltaTime
                 if sleepTime > 0:
@@ -210,13 +233,14 @@ class Modbus():
                              .format(exc))
 
     def _update_datapoints(self):
+        nr_reads = 0
         # reads all datapoints with timer <=0
         for dataPoint in self._dataPoints:
+            # logger.debug("Modbus do item: {}".format(dataPoint['item']))
             action = None  # options: read, write
             # noting to do
-            if (dataPoint['init'] and
-                    (dataPoint['read_interval'] is None or
-                     dataPoint['read_interval'] < 0)):
+            if dataPoint['init'] and dataPoint['read_interval'] == None:
+                logger.debug("Modbus nothing to do: {}".format(dataPoint['item']))
                 continue
             if not dataPoint['init']:
                 # if read or write fails this is reset to False
@@ -227,6 +251,9 @@ class Modbus():
                     action = 'write'
                 else:  # if none
                     action = None
+                # spread out reads. randomize reads
+                if dataPoint['read_interval']:
+                    dataPoint['current_time'] = randint(1, dataPoint['read_interval'])
 
             if (not action and
                     dataPoint['read_interval'] and
@@ -234,10 +261,11 @@ class Modbus():
                 dataPoint['current_time'] = dataPoint['read_interval']
                 action = 'read'
 
-            # logger.info('Modbus item: {}, action: {}, currentTime: {}'
-            #             .format(dataPoint['item'], action, dataPoint['current_time']))
+            logger.info('Modbus item: {}, action: {}, currentTime: {}'
+                        .format(dataPoint['item'], action, dataPoint['current_time']))
 
             if action == 'read':
+                nr_reads += 1
                 val = self._read_datapoint(dataPoint)
                 dataPoint['item'](val,
                                   dataPoint['master_id'],
@@ -246,6 +274,7 @@ class Modbus():
             elif action == 'write':
                 val = dataPoint['item']()
                 self._write_datapoint(dataPoint, val)
+        return nr_reads
 
     def __data_point_to_string(self, dataPoint):
         return ("{}, {}, slave#{}, addr {}, len {}"
@@ -274,41 +303,68 @@ class Modbus():
                 dp['init'] = False
 
     def _read_datapoint(self, dataPoint):
-        val = None
-        try:
-            val = self._master.execute(
-                dataPoint['slave_nr'],
-                self.MODBUS_TYPES[dataPoint['type']]['read'],
-                dataPoint['addr'],
-                dataPoint['length'])
-            val = dataPoint['unpack'](val)
-            logger.debug("Modbus item read: {}. val: {}"
-                         .format(str(dataPoint['item']),
-                                 str(val)))
-            sleep(self._downTime)
-        # exceptins for telegram problems
-        except (modbus_tk.modbus.ModbusInvalidResponseError,
-                modbus_tk.modbus.ModbusError) as exc:
-            self._readErrorCount += 1
+        read_fails = 0
+        successful_read = False
+        exception = None
+        for try_nr in range(0, self._retries):
+            val = None
+            try:
+                logger.debug("Modbus try nr {} for reading item: {}."
+                             .format(str(try_nr),
+                                     str(dataPoint['item'])))
+                self._readCount += 1
+                val = self._master.execute(
+                    dataPoint['slave_nr'],
+                    self.MODBUS_TYPES[dataPoint['type']]['read'],
+                    dataPoint['addr'],
+                    dataPoint['length'])
+                val = dataPoint['unpack'](val)
+                logger.debug("Modbus item read: {}. val: {} on the {} try."
+                             .format(str(dataPoint['item']),
+                                     str(val),
+                                     str(try_nr)))
+                sleep(self._downTime)
+                successful_read = True
+                return val
+            # exceptins for telegram problems
+            except (modbus_tk.modbus.ModbusInvalidResponseError,
+                    modbus_tk.modbus.ModbusError) as exc:
+                self._readErrorCount += 1
+                read_fails += 1
+                exception = exc
+                successful_read = False
+                sleep(self._downTime)
+            # exceptions for connection problems
+            except (ConnectionResetError,
+                    ConnectionRefusedError,
+                    Exception) as exc:  # For undefind pyserial exceptions
+                self.__manage_lost_connection(dataPoint)
+                logger.error("Modbus connection faild while reading: {}. {}"
+                             .format(self.__data_point_to_string(dataPoint),
+                                     exc))
+
+        if not successful_read:
+            logger.error(("Fail reading modbus value in {} trys. "
+                          "Bad telegram: {}. {}")
+                          .format(read_fails,
+                                  self.__data_point_to_string(dataPoint),
+                                  exception))
+            per = float(self._readErrorCount) / float(self._readCount) * 100.0
+            logger.warning(("Accumulated modbus read error count:"
+                            " {} of reads: {} ({:04.2f} %)")
+                            .format(self._readErrorCount,
+                                    self._readCount,
+                                    per))
+            # after x retries faild the connection is considert lost
             self.__manage_lost_connection(dataPoint)
-            logger.error("Fail reading modbus value. Bad telegram: {}. {}"
-                         .format(self.__data_point_to_string(dataPoint),
-                                 exc))
-            logger.warning("Accumulated modbus read error count: {}"
-                           .format(self._readErrorCount))
-        # exceptions for connection problems
-        except (ConnectionResetError,
-                ConnectionRefusedError,
-                Exception) as exc:  # For undefind pyserial exceptions
-            self.__manage_lost_connection(dataPoint)
-            logger.error("Modbus connection faild while reading: {}. {}"
-                         .format(self.__data_point_to_string(dataPoint),
-                                 exc))
-        return val
 
     def _write_datapoint(self, dataPoint, val):
+        write_fails = 0
+        successful_write = False
+        exception = None
         try:
             _val = dataPoint['pack'](val)
+            self._writeCount += 1
             self._master.execute(
                 dataPoint['slave_nr'],
                 self.MODBUS_TYPES[dataPoint['type']]['write'],
@@ -319,23 +375,35 @@ class Modbus():
                          .format(str(dataPoint['item']),
                                  str(_val)))
             sleep(self._downTime)
+            successful_write = True
         # exceptins for telegram problems
         except (modbus_tk.modbus.ModbusInvalidResponseError,
                 modbus_tk.modbus.ModbusError) as exc:
             self._writeErrorCount += 1
-            logger.error("Fail writing modbus value. Bad telegram: {}. {}"
-                         .format(self.__data_point_to_string(dataPoint),
-                                 exc))
-            logger.warning("Accumulated modbus write error count: {}"
-                           .format(self._writeErrorCount))
-            self.__manage_lost_connection(dataPoint)
+            write_fails += 1
+            exception = exc
+            successful_write = False
+            sleep(self._downTime)
         # exceptions for connection problems
         except (ConnectionResetError,
                 ConnectionRefusedError,
                 Exception) as exc:  # For undefind pyserial exceptions
+            self.__manage_lost_connection(dataPoint)
             logger.error("Modbus connection faild while writing: {}. {}"
                          .format(self.__data_point_to_string(dataPoint),
                                  exc))
+
+        if not successful_write:
+            logger.error("Fail writing modbus value. Bad telegram: {}. {}"
+                         .format(self.__data_point_to_string(dataPoint),
+                                 exception))
+            per = float(self._writeErrorCount) / float(self._writeCount) * 100.0
+            logger.warning(("Accumulated modbus write error count:"
+                            " {} of writes: {} ({:04.2f} %)")
+                            .format(self._readErrorCount,
+                                    self._readCount,
+                                    per))
+            # after x retries faild the connection is considert lost
             self.__manage_lost_connection(dataPoint)
 
     def parse_item(self, item):
@@ -348,7 +416,7 @@ class Modbus():
             'type': None,
             'unpack': lambda x: x,  # lambda function
             'pack': lambda x: x,  # lambda function
-            'read_interval': None,
+            'read_interval': None,  # interval for reading if given
             'current_time': 1,  # counts down and if <0 reading is done
             'init': False,  # is set to True if init is done.
             'init_style': None  # None, read, write
@@ -368,7 +436,11 @@ class Modbus():
 
         param = 'modbus_readInterval'
         if param in item.conf:
-            dataPoint['read_interval'] = int(item.conf[param])
+            val = int(item.conf[param])
+            if val > 0:
+                dataPoint['read_interval'] = val
+            else:
+                dataPoint['read_interval'] = None
 
         def __reverseListOp(param):
             # reversing list building of smarthome.py config parser for the
@@ -409,6 +481,30 @@ class Modbus():
             datapoint = next(datapoint for datapoint in
                              self._dataPoints if datapoint['item'] == item)
             self._write_datapoint(datapoint, item())
+
+    def __str__(self):
+        head = [
+            'item',
+            'master_id',
+            'slave_nr',
+            'addr',
+            'init',
+            'read_interval',
+            'current_time'
+        ]
+        s = ', '.join(head) + '\n'
+        for dp in self._dataPoints:
+            data = [
+                str(dp['item']),
+                str(dp['master_id']),
+                str(dp['slave_nr']),
+                str(dp['addr']),
+                str(dp['init']),
+                str(dp['read_interval']),
+                str(dp['current_time'])
+            ]
+            s += ', '.join(data) + '\n'
+        return s
 
 
 if __name__ == '__main__':

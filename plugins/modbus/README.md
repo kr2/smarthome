@@ -10,8 +10,8 @@ If there are a lot of Modbus datapoints to read in one 'click', then it is not a
 
 # How it works
 At startup it sets up modbus-tk for all defined Masters differentiated by master_id. Modbus-tk opens the connection with the first read or write.   
-On the first run off read loop (__read_loop) all datapoints are read for init values. After that the interval for reading is defined by modbus_readInterval separately for every item.   
-If a Slave response is bad (missing, corrupted, ...) it is assumed that this slave is offline and all datapoints of this slave are set up to be read on the next tick (default 1 second). That means all configured Modbus datapoints have to be readable else the master tries to read all datapoints of that slave every tick. This could become a problem if there are a lot of them and the values are required in a certain interval.
+On the first run off read loop (__read_loop) all datapoints are read or written (modbus_init) for init values. After that the interval for reading is defined by modbus_readInterval separately for every item.   
+If a Slave response is bad (missing, corrupted, ...) it retries x times and after that it is assumed that this slave is offline, it trys to a reconnect and all datapoints of this slave are set up to be read on the next tick (default 1 second). That means all configured Modbus datapoints have to be readable else the master tries to read/write all modbus_init datapoints of that slave every tick. This could become a problem if there are a lot of them and the values are required in a certain interval.
 
 # Requirements
 - modbus-tk (https://github.com/ljean/modbus-tk)    
@@ -30,8 +30,10 @@ Modbus RTU and TCP
 * `com_type` --  Modbus RTU or TCP {RTU, TCP}.
 * `timeout` -- Timeout between request and fully received response (modbus-tk).
 * `downTime` -- Timeout between reads. Some slaves (especially rtu ones) need some downtime between request to avoid errors.
+* `retries` -- Number of retrys after telegram error. After that the connection is considert lost and it trys a reconnect.
 * `rtu_*` -- Self-explanatory. If it is used is defined by com_type.
 * `tcp_*` -- Self-explanatory. If it is used is defined by com_type.
+* `verbose` -- If True debugoutput is set to verbose and there is data written to /var/modbus/*master_id*.txt
 
 
 <pre>
@@ -43,6 +45,7 @@ Modbus RTU and TCP
     com_type = RTU  # {RTU, TCP}
     # timeout = None  # timeout for request. Default: RTU: 0.5 sec, TCP: 1.0 sec
     # downTime = None  # timeout between reads. Default: RTU: 0.05 sec, TCP: 0.01 sec
+    # retries = 10 
 
     # RTU:
     # rtu_port = /dev/ttyUSB0
@@ -55,6 +58,8 @@ Modbus RTU and TCP
     # TCP:
     # tcp_ip = 192.168.2.8
     # tcp_port = 50502   # standard modbus TCP port 502 is privileged 
+
+    # verbose = False
 </pre>
 
 ### Example
