@@ -122,7 +122,7 @@ class SQL():
                 logger.warning("SQLite: only supports 'num' and 'bool' as types. Item: {} ".format(item.id()))
                 return
             cache = self._fetchone("SELECT _start,_value from cache WHERE _item = '{}'".format(item.id()))
-            if cache is not None:
+            if cache is not None and item.conf['sqlite'].lower() == 'init':
                 last_change, value = cache
                 item._sqlite_last = last_change
                 last_change = self._datetime(last_change)
