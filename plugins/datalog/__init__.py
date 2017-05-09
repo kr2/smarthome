@@ -35,9 +35,12 @@ class DataLog():
     _buffer_lock = None
 
     def __init__(self, smarthome, path="var/log/data", filepatterns={ "default" : "{log}-{year}-{month}-{day}.csv" }, logpatterns={ "csv" : "{time};{item};{value}\n" }, cycle=10):
+
         self._sh = smarthome
         self.path = path
 
+        if type(filepatterns) is str:
+            filepatterns = [filepatterns]
         if type(filepatterns) is list:
             for pattern in filepatterns:
                 key, value = pattern.split(':')
@@ -45,12 +48,15 @@ class DataLog():
         else:
             self.filepatterns = filepatterns
 
+        if type(logpatterns) is str:
+            logpatterns = [logpatterns]
         if type(logpatterns) is list:
             newlogpatterns = {}
             for pattern in logpatterns:
                 key, value = pattern.split(':')
                 newlogpatterns[key] = value
             logpatterns = newlogpatterns
+
 
         for log in self.filepatterns:
             ext = self.filepatterns[log].split('.')[-1]
@@ -61,7 +67,7 @@ class DataLog():
         self._items = {}
         self._buffer = {}
         self._buffer_lock = threading.Lock()
-        
+
         logger.info('DataLog: Initialized, logging to "{}"'.format(self.path))
         for log in self.filepatterns:
             logger.info('DataLog: Registered log "{}", file="{}", format="{}"'.format(log, self.filepatterns[log], self.logpatterns[log]))
@@ -136,7 +142,7 @@ class DataLog():
                             handles[filename] = open(self.path + '/' + filename, 'a')
 
                         data = entry
-                        data['stamp'] = data['time'].time();
+                        data['stamp'] = data['time'].timestamp()
                         handles[filename].write(logpattern.format(**data))
 
                 except Exception as e:
